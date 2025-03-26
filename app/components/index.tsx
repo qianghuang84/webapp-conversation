@@ -271,6 +271,21 @@ const Main: FC<IMainProps> = () => {
     })()
   }, [])
 
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      fetch('/api/parameters')
+        .then(response => response.json())
+        .then(data => {
+          console.log('/api/parameters succeed:', data)
+        })
+        .catch(error => {
+          console.error('/api/parameters error:', error)
+        })
+    }, 10000)
+
+    return () => clearInterval(intervalId)
+  }, [])  
+
   const [isResponding, { setTrue: setRespondingTrue, setFalse: setRespondingFalse }] = useBoolean(false)
   const [abortController, setAbortController] = useState<AbortController | null>(null)
   const { notify } = Toast
