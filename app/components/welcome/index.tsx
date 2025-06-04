@@ -3,6 +3,7 @@ import type { FC } from 'react'
 import React, { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import TemplateVarPanel, { PanelTitle, VarOpBtnGroup } from '../value-panel'
+import FileUploaderInAttachmentWrapper from '../base/file-uploader-in-attachment'
 import s from './style.module.css'
 import { AppInfoComp, ChatBtn, EditBtn, FootLogo, PromptTemplate } from './massive-component'
 import type { AppInfo, PromptConfig } from '@/types/app'
@@ -36,6 +37,7 @@ const Welcome: FC<IWelcomeProps> = ({
   savedInputs,
   onInputsChange,
 }) => {
+  console.log(promptConfig)
   const { t } = useTranslation()
   const hasVar = promptConfig.prompt_variables.length > 0
   const [isFold, setIsFold] = useState<boolean>(true)
@@ -131,6 +133,41 @@ const Welcome: FC<IWelcomeProps> = ({
                 onChange={(e) => { onInputsChange({ ...inputs, [item.key]: e.target.value }) }}
               />
             )}
+
+            {
+              item.type === 'file' && (
+                <FileUploaderInAttachmentWrapper
+                  fileConfig={{
+                    allowed_file_types: item.allowed_file_types,
+                    allowed_file_extensions: item.allowed_file_extensions,
+                    allowed_file_upload_methods: item.allowed_file_upload_methods!,
+                    number_limits: 1,
+                    fileUploadConfig: {} as any,
+                  }}
+                  onChange={(files) => {
+                    setInputs({ ...inputs, [item.key]: files[0] })
+                  }}
+                  value={inputs?.[item.key] || []}
+                />
+              )
+            }
+            {
+              item.type === 'file-list' && (
+                <FileUploaderInAttachmentWrapper
+                  fileConfig={{
+                    allowed_file_types: item.allowed_file_types,
+                    allowed_file_extensions: item.allowed_file_extensions,
+                    allowed_file_upload_methods: item.allowed_file_upload_methods!,
+                    number_limits: item.max_length,
+                    fileUploadConfig: {} as any,
+                  }}
+                  onChange={(files) => {
+                    setInputs({ ...inputs, [item.key]: files })
+                  }}
+                  value={inputs?.[item.key] || []}
+                />
+              )
+            }
           </div>
         ))}
       </div>
@@ -140,7 +177,10 @@ const Welcome: FC<IWelcomeProps> = ({
   const canChat = () => {
     const inputLens = Object.values(inputs).length
     const promptVariablesLens = promptConfig.prompt_variables.length
-    const emptyInput = inputLens < promptVariablesLens || Object.values(inputs).filter(v => v === '').length > 0
+    const emptyInput = inputLens < promptVariablesLens || Object.entries(inputs).filter(([k, v]) => {
+      const isRequired = promptConfig.prompt_variables.find(item => item.key === k)?.required ?? true
+      return isRequired && v === ''
+    }).length > 0
     if (emptyInput) {
       logError(t('app.errorMessage.valueOfVarRequired'))
       return false

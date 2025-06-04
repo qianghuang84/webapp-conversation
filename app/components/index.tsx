@@ -101,6 +101,7 @@ const Main: FC<IMainProps> = () => {
 
   const conversationName = currConversationInfo?.name || t('app.chat.newChatDefaultName') as string
   const conversationIntroduction = currConversationInfo?.introduction || ''
+  const suggestedQuestions = currConversationInfo?.suggested_questions || []
 
   const handleConversationSwitch = () => {
     if (!inited)
@@ -117,6 +118,7 @@ const Main: FC<IMainProps> = () => {
       setExistConversationInfo({
         name: item?.name || '',
         introduction: notSyncToStateIntroduction,
+        suggested_questions: suggestedQuestions,
       })
     }
     else {
@@ -192,6 +194,7 @@ const Main: FC<IMainProps> = () => {
         name: t('app.chat.newChatDefaultName'),
         inputs: newConversationInputs,
         introduction: conversationIntroduction,
+        suggested_questions: suggestedQuestions,
       })
     }))
   }
@@ -209,6 +212,7 @@ const Main: FC<IMainProps> = () => {
       isAnswer: true,
       feedbackDisabled: true,
       isOpeningStatement: isShowPrompt,
+      suggestedQuestions: suggestedQuestions,
     }
     if (calculatedIntroduction)
       return [openStatement]
@@ -225,7 +229,6 @@ const Main: FC<IMainProps> = () => {
     (async () => {
       try {
         const [conversationData, appParams] = await Promise.all([fetchConversations(), fetchAppParams()])
-
         // handle current conversation id
         const { data: conversations, error } = conversationData as { data: ConversationItem[]; error: string }
         if (error) {
@@ -234,15 +237,24 @@ const Main: FC<IMainProps> = () => {
           return
         }
         const _conversationId = getConversationIdFromStorage(APP_ID)
-        const isNotNewConversation = conversations.some(item => item.id === _conversationId)
+        const currentConversation = conversations.find(item => item.id === _conversationId)
+        const isNotNewConversation = !!currentConversation
 
         // fetch new conversation info
-        const { user_input_form, opening_statement: introduction, file_upload, system_parameters }: any = appParams
+        const { user_input_form, opening_statement: introduction, file_upload, system_parameters, suggested_questions = [] }: any = appParams
         setLocaleOnClient(APP_INFO.default_language, true)
         setNewConversationInfo({
           name: t('app.chat.newChatDefaultName'),
           introduction,
+          suggested_questions
         })
+        if (isNotNewConversation) {
+          setExistConversationInfo({
+            name: currentConversation.name || t('app.chat.newChatDefaultName'),
+            introduction,
+            suggested_questions
+          })
+        }
         const prompt_variables = userInputsFormToPromptVariables(user_input_form)
         setPromptConfig({
           prompt_template: promptTemplate,
@@ -341,13 +353,37 @@ const Main: FC<IMainProps> = () => {
     setChatList(newListWithAnswer)
   }
 
+  const transformToServerFile = (fileItem: any) => {
+    return {
+      type: 'image',
+      transfer_method: fileItem.transferMethod,
+      url: fileItem.url,
+      upload_file_id: fileItem.id,
+    }
+  }
+
   const handleSend = async (message: string, files?: VisionFile[]) => {
     if (isResponding) {
       notify({ type: 'info', message: t('app.errorMessage.waitForResponse') })
       return
     }
+    const toServerInputs: Record<string, any> = {}
+    if (currInputs) {
+      Object.keys(currInputs).forEach((key) => {
+        const value = currInputs[key]
+        if (value.supportFileType)
+          toServerInputs[key] = transformToServerFile(value)
+
+        else if (value[0]?.supportFileType)
+          toServerInputs[key] = value.map((item: any) => transformToServerFile(item))
+
+        else
+          toServerInputs[key] = value
+      })
+    }
+
     const data: Record<string, any> = {
-      inputs: currInputs,
+      inputs: toServerInputs,
       query: message,
       conversation_id: isNewConversation ? null : currConversationId,
     }

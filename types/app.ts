@@ -10,6 +10,9 @@ export type PromptVariable = {
   options?: string[]
   max_length?: number
   required: boolean
+  allowed_file_extensions?: string[]
+  allowed_file_types?: string[]
+  allowed_file_upload_methods?: TransferMethod[]
 }
 
 export type PromptConfig = {
@@ -99,7 +102,8 @@ export type ConversationItem = {
   id: string
   name: string
   inputs: Record<string, any> | null
-  introduction: string
+  introduction: string,
+  suggested_questions?: string[]
 }
 
 export type AppInfo = {
