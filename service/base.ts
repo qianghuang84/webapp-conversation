@@ -139,6 +139,21 @@ function unicodeToChar(text: string) {
   })
 }
 
+// 安全的JSON解析函数
+async function safeJsonParse(response: Response): Promise<any> {
+  const text = await response.text()
+  if (!text.trim())
+    throw new Error('Empty response')
+
+  try {
+    return JSON.parse(text)
+  }
+  catch (error) {
+    console.warn('Failed to parse JSON:', text)
+    throw new Error('Invalid JSON response')
+  }
+}
+
 const handleStream = (
   response: Response,
   onData: IOnData,
@@ -288,23 +303,42 @@ const baseFetch = (url: string, fetchOptions: any, { needAllResponseContent }: I
           // Error handler
           if (!/^(2|3)\d{2}$/.test(res.status)) {
             try {
-              const bodyJson = res.json()
-              switch (res.status) {
-                case 401: {
-                  Toast.notify({ type: 'error', message: 'Invalid token' })
-                  return
+              // Check if response has content before trying to parse JSON
+              const contentLength = res.headers.get('content-length')
+              const contentType = res.headers.get('content-type')
+
+              if (contentLength === '0' || !contentType?.includes('application/json')) {
+                // No content or not JSON, show generic error
+                switch (res.status) {
+                  case 401: {
+                    Toast.notify({ type: 'error', message: 'Invalid token' })
+                    return
+                  }
+                  default:
+                    Toast.notify({ type: 'error', message: `Server error: ${res.status} ${res.statusText}` })
                 }
-                default:
-                  // eslint-disable-next-line no-new
-                  new Promise(() => {
-                    bodyJson.then((data: any) => {
-                      Toast.notify({ type: 'error', message: data.message })
+              }
+              else {
+                // Use safe JSON parsing
+                switch (res.status) {
+                  case 401: {
+                    Toast.notify({ type: 'error', message: 'Invalid token' })
+                    return
+                  }
+                  default:
+                    // eslint-disable-next-line no-new
+                    new Promise(() => {
+                      safeJsonParse(res.clone()).then((data: any) => {
+                        Toast.notify({ type: 'error', message: data?.message || `Server error: ${res.status}` })
+                      }).catch(() => {
+                        Toast.notify({ type: 'error', message: `Server error: ${res.status} ${res.statusText}` })
+                      })
                     })
-                  })
+                }
               }
             }
             catch (e) {
-              Toast.notify({ type: 'error', message: `${e}` })
+              Toast.notify({ type: 'error', message: `Network error: ${e}` })
             }
 
             return Promise.reject(resClone)
@@ -317,9 +351,19 @@ const baseFetch = (url: string, fetchOptions: any, { needAllResponseContent }: I
           }
 
           // return data
-          const data = options.headers.get('Content-type') === ContentType.download ? res.blob() : res.json()
-
-          resolve(needAllResponseContent ? resClone : data)
+          if (options.headers.get('Content-type') === ContentType.download) {
+            const data = res.blob()
+            resolve(needAllResponseContent ? resClone : data)
+          }
+          else {
+            // Use safe JSON parsing for regular responses
+            safeJsonParse(res.clone()).then((data) => {
+              resolve(needAllResponseContent ? resClone : data)
+            }).catch((error) => {
+              console.error('Failed to parse response JSON:', error)
+              reject(new Error(`Response parsing failed: ${error.message}`))
+            })
+          }
         })
         .catch((err) => {
           Toast.notify({ type: 'error', message: err })
@@ -394,9 +438,17 @@ export const ssePost = (
       if (!/^(2|3)\d{2}$/.test(res.status)) {
         // eslint-disable-next-line no-new
         new Promise(() => {
-          res.json().then((data: any) => {
-            Toast.notify({ type: 'error', message: data.message || 'Server Error' })
-          })
+          const contentType = res.headers.get('content-type')
+          if (contentType?.includes('application/json')) {
+            safeJsonParse(res.clone()).then((data: any) => {
+              Toast.notify({ type: 'error', message: data?.message || 'Server Error' })
+            }).catch(() => {
+              Toast.notify({ type: 'error', message: `Server Error: ${res.status} ${res.statusText}` })
+            })
+          }
+          else {
+            Toast.notify({ type: 'error', message: `Server Error: ${res.status} ${res.statusText}` })
+          }
         })
         onError?.('Server Error')
         return

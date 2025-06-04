@@ -22,6 +22,7 @@ import AppUnavailable from '@/app/components/app-unavailable'
 import { API_KEY, APP_ID, APP_INFO, isShowPrompt, promptTemplate } from '@/config'
 import type { Annotation as AnnotationType } from '@/types/log'
 import { addFileInfos, sortAgentSorts } from '@/utils/tools'
+import { supabase } from '@/utils/supabaseClient'
 
 export type IMainProps = {
   params: any
@@ -72,6 +73,10 @@ const Main: FC<IMainProps> = () => {
     getCurrConversationId,
     setCurrConversationId,
     getConversationIdFromStorage,
+    saveConversationListToSupabase,
+    getConversationListFromSupabase,
+    saveConversationToStorage,
+    syncLocalStorageToSupabase,
     isNewConversation,
     currConversationInfo,
     currInputs,
@@ -156,7 +161,7 @@ const Main: FC<IMainProps> = () => {
   }
   useEffect(handleConversationSwitch, [currConversationId, inited])
 
-  const handleConversationIdChange = (id: string) => {
+  const handleConversationIdChange = async (id: string) => {
     if (id === '-1') {
       createNewChat()
       setConversationIdChangeBecauseOfNew(true)
@@ -165,7 +170,7 @@ const Main: FC<IMainProps> = () => {
       setConversationIdChangeBecauseOfNew(false)
     }
     // trigger handleConversationSwitch
-    setCurrConversationId(id, APP_ID)
+    await setCurrConversationId(id, APP_ID)
     hideSidebar()
   }
 
@@ -233,7 +238,7 @@ const Main: FC<IMainProps> = () => {
           throw new Error(error)
           return
         }
-        const _conversationId = getConversationIdFromStorage(APP_ID)
+        const _conversationId = await getConversationIdFromStorage(APP_ID)
         const isNotNewConversation = conversations.some(item => item.id === _conversationId)
 
         // fetch new conversation info
@@ -252,10 +257,30 @@ const Main: FC<IMainProps> = () => {
           ...file_upload?.image,
           image_file_size_limit: system_parameters?.system_parameters || 0,
         })
-        setConversationList(conversations as ConversationItem[])
+        // 先从Supabase获取对话列表，如果失败则使用API返回的列表
+        const supabaseConversations = await getConversationListFromSupabase(APP_ID)
+        if (supabaseConversations.length > 0) {
+          // 如果Supabase有数据，使用Supabase的数据并合并API数据
+          const apiConversations = conversations as ConversationItem[]
+          const mergedConversations = [
+            ...supabaseConversations,
+            ...apiConversations.filter(apiConv =>
+              !supabaseConversations.some(supaConv => supaConv.id === apiConv.id),
+            ),
+          ]
+          setConversationList(mergedConversations)
+
+          // 将API返回的新对话保存到Supabase
+          await saveConversationListToSupabase(APP_ID, apiConversations)
+        }
+        else {
+          // 如果Supabase没有数据，使用API返回的数据并保存到Supabase
+          setConversationList(conversations as ConversationItem[])
+          await saveConversationListToSupabase(APP_ID, conversations as ConversationItem[])
+        }
 
         if (isNotNewConversation)
-          setCurrConversationId(_conversationId, APP_ID, false)
+          await setCurrConversationId(_conversationId, APP_ID, false)
 
         setInited(true)
       }
@@ -275,16 +300,43 @@ const Main: FC<IMainProps> = () => {
     const intervalId = setInterval(() => {
       fetch('/api/parameters')
         .then(response => response.json())
-        .then(data => {
+        .then((data) => {
           console.log('/api/parameters succeed:', data)
         })
-        .catch(error => {
+        .catch((error) => {
           console.error('/api/parameters error:', error)
         })
     }, 10000)
 
     return () => clearInterval(intervalId)
-  }, [])  
+  }, [])
+
+  // 监听用户登录状态，登录后同步数据
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event: string, session: any) => {
+        if (event === 'SIGNED_IN' && session?.user) {
+          console.log('用户登录，开始同步数据到Supabase')
+          try {
+            // 同步localStorage数据到Supabase
+            await syncLocalStorageToSupabase(APP_ID)
+
+            // 重新获取对话列表（合并远程和本地数据）
+            const supabaseConversations = await getConversationListFromSupabase(APP_ID)
+            if (supabaseConversations.length > 0) {
+              setConversationList(supabaseConversations)
+              console.log('已同步', supabaseConversations.length, '条对话')
+            }
+          }
+          catch (error) {
+            console.error('同步数据失败:', error)
+          }
+        }
+      },
+    )
+
+    return () => subscription.unsubscribe()
+  }, [])
 
   const [isResponding, { setTrue: setRespondingTrue, setFalse: setRespondingFalse }] = useBoolean(false)
   const [abortController, setAbortController] = useState<AbortController | null>(null)
@@ -445,11 +497,21 @@ const Main: FC<IMainProps> = () => {
             draft[0].name = newItem.name
           })
           setConversationList(newAllConversations as any)
+
+          // 保存新创建的对话到Supabase
+          if (allConversations[0]) {
+            await saveConversationToStorage(APP_ID, {
+              id: allConversations[0].id,
+              name: newItem.name,
+              inputs: allConversations[0].inputs || {},
+              introduction: allConversations[0].introduction || '',
+            })
+          }
         }
         setConversationIdChangeBecauseOfNew(false)
         resetNewConversationInputs()
         setChatNotStarted()
-        setCurrConversationId(tempNewConversationId, APP_ID, true)
+        await setCurrConversationId(tempNewConversationId, APP_ID, true)
         setRespondingFalse()
       },
       onFile(file) {
